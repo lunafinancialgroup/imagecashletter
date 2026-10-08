@@ -181,7 +181,12 @@ func (cl *CashLetter) build() error {
 
 			// Set Addenda SequenceNumber and RecordNumber
 			for i := range cd.CheckDetailAddendumA {
-				cd.CheckDetailAddendumA[i].SetBOFDItemSequenceNumber(cdSequenceNumber)
+				// The BOFD item sequence number identifies the item at the bank of first
+				// deposit, which is not necessarily this detail record's own sequence
+				// number, so only fill it in when the caller has left it unset.
+				if cd.CheckDetailAddendumA[i].BOFDItemSequenceNumber == "" {
+					cd.CheckDetailAddendumA[i].SetBOFDItemSequenceNumber(cdSequenceNumber)
+				}
 				cd.CheckDetailAddendumA[i].RecordNumber = cdAddendumARecordNumber
 				cdAddendumARecordNumber++
 				if cdAddendumARecordNumber > 9 {
@@ -224,7 +229,13 @@ func (cl *CashLetter) build() error {
 
 			// Set Addenda SequenceNumber and RecordNumber
 			for i := range rd.ReturnDetailAddendumA {
-				rd.ReturnDetailAddendumA[i].SetBOFDItemSequenceNumber(rdSequenceNumber)
+				// On a return this carries the sequence number of the original forward
+				// item, which is how the depositing bank ties the return back to what it
+				// sent. Overwriting it with this return's own sequence number destroys
+				// that link, so only fill it in when the caller has left it unset.
+				if rd.ReturnDetailAddendumA[i].BOFDItemSequenceNumber == "" {
+					rd.ReturnDetailAddendumA[i].SetBOFDItemSequenceNumber(rdSequenceNumber)
+				}
 				rd.ReturnDetailAddendumA[i].RecordNumber = rdAddendumARecordNumber
 				rdAddendumARecordNumber++
 				if rdAddendumARecordNumber > 9 {

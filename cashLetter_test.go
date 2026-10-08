@@ -116,7 +116,7 @@ func TestCashLetter_customSequenceNumber(t *testing.T) {
 	require.Len(t, cl.Bundles[0].Checks[0].CheckDetailAddendumA, 2)
 	require.Equal(t, 1, cl.Bundles[0].Checks[0].CheckDetailAddendumA[0].RecordNumber)
 	require.Equal(t, 2, cl.Bundles[0].Checks[0].CheckDetailAddendumA[1].RecordNumber)
-	require.Equal(t, wantCheckSeq, cl.Bundles[0].Checks[0].CheckDetailAddendumA[0].BOFDItemSequenceNumber)
+	require.Equal(t, "1              ", cl.Bundles[0].Checks[0].CheckDetailAddendumA[0].BOFDItemSequenceNumber, "should not have overwritten custom sequence number")
 
 	// CheckDetailAddendumC
 	require.Len(t, cl.Bundles[0].Checks[0].CheckDetailAddendumC, 2)
@@ -128,7 +128,7 @@ func TestCashLetter_customSequenceNumber(t *testing.T) {
 	require.Len(t, cl.Bundles[1].Returns, 1)
 	wantReturnSeq := "000000000004923"
 	require.Equal(t, wantReturnSeq, cl.Bundles[1].Returns[0].EceInstitutionItemSequenceNumber)
-	require.Equal(t, wantReturnSeq, cl.Bundles[1].Returns[0].ReturnDetailAddendumA[0].BOFDItemSequenceNumber)
+	require.Equal(t, "1              ", cl.Bundles[1].Returns[0].ReturnDetailAddendumA[0].BOFDItemSequenceNumber, "should not have overwritten custom sequence number")
 	require.Equal(t, wantReturnSeq, cl.Bundles[1].Returns[0].ReturnDetailAddendumD[0].EndorsingBankItemSequenceNumber)
 }
 
@@ -155,4 +155,63 @@ func TestCashLetterBuild_NilHeader(t *testing.T) {
 	err := cl.build()
 	require.Error(t, err)
 	require.Equal(t, "nil CashLetterHeader", err.Error())
+}
+
+// TestCashLetter_preservesBOFDItemSequenceNumber verifies that a caller-supplied
+// BOFDItemSequenceNumber survives Create().
+//
+// The BOFD item sequence number identifies the item at the bank of first deposit. On a
+// return received from the Fed it carries the sequence number of the *original forward*
+// item, which is what lets the depositing bank tie the return back to what it sent. It
+// is therefore not interchangeable with the detail record's own ECE institution item
+// sequence number, and overwriting it with that value destroys the linkage.
+//
+// Matches the behaviour already implemented for EndorsingBankItemSequenceNumber on
+// CheckDetailAddendumC: a value set by the caller is left alone, an empty one is
+// populated from the detail's sequence number.
+func TestCashLetter_preservesBOFDItemSequenceNumber(t *testing.T) {
+	const originalForwardISN = "000078366005826"
+
+	// Return whose addendum A carries the forward item's sequence number.
+	returnBundle := NewBundle(mockBundleHeader())
+	rd := mockReturnDetail()
+	rd.SetEceInstitutionItemSequenceNumber(4923)
+	rd.AddendumCount = 1
+	rdAddendumA := mockReturnDetailAddendumA()
+	rdAddendumA.BOFDItemSequenceNumber = originalForwardISN
+	rd.AddReturnDetailAddendumA(rdAddendumA)
+	returnBundle.AddReturnDetail(rd)
+
+	// Return whose addendum A leaves it unset, so it should be populated.
+	rdEmpty := mockReturnDetail()
+	rdEmpty.SetEceInstitutionItemSequenceNumber(4924)
+	rdEmpty.AddendumCount = 1
+	rdEmpty.AddReturnDetailAddendumA(mockReturnDetailAddendumAWithoutBOFDItemSequenceNumber())
+	returnBundle.AddReturnDetail(rdEmpty)
+
+	// Forward check with the same contract.
+	checkBundle := NewBundle(mockBundleHeader())
+	cd := mockCheckDetail()
+	cd.SetEceInstitutionItemSequenceNumber(283)
+	cd.AddendumCount = 1
+	cdAddendumA := mockCheckDetailAddendumA()
+	cdAddendumA.BOFDItemSequenceNumber = originalForwardISN
+	cd.AddCheckDetailAddendumA(cdAddendumA)
+	checkBundle.AddCheckDetail(cd)
+
+	cl := NewCashLetter(mockCashLetterHeader())
+	cl.AddBundle(returnBundle)
+	cl.AddBundle(checkBundle)
+	require.NoError(t, cl.Create())
+
+	require.Equal(t, originalForwardISN, cl.Bundles[0].Returns[0].ReturnDetailAddendumA[0].BOFDItemSequenceNumber,
+		"return: should not have overwritten the caller's BOFD item sequence number")
+	require.Equal(t, "000000000004924", cl.Bundles[0].Returns[1].ReturnDetailAddendumA[0].BOFDItemSequenceNumber,
+		"return: should have populated the empty BOFD item sequence number")
+	require.Equal(t, originalForwardISN, cl.Bundles[1].Checks[0].CheckDetailAddendumA[0].BOFDItemSequenceNumber,
+		"forward: should not have overwritten the caller's BOFD item sequence number")
+
+	// The detail records' own sequence numbers are unaffected.
+	require.Equal(t, "000000000004923", cl.Bundles[0].Returns[0].EceInstitutionItemSequenceNumber)
+	require.Equal(t, "000000000000283", cl.Bundles[1].Checks[0].EceInstitutionItemSequenceNumber)
 }
